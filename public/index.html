@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Atelier AI, éditeur visuel de sites web assisté par une IA locale." />
+    <title>Atelier AI — Concevez, ajustez, créez</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <script>
+      try { document.documentElement.dataset.uiTheme = localStorage.getItem("atelier-ai-ui-theme") || "light"; } catch { document.documentElement.dataset.uiTheme = "light"; }
+    </script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Atelier AI, accueil">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span></span>
+          <span>atelier<span class="brand-dot">.ai</span></span>
+        </a>
+
+        <div class="project-heading">
+          <button class="icon-button mobile-only" id="layersToggle" aria-label="Afficher les calques">
+            <svg viewBox="0 0 24 24"><path d="m12 3-9 5 9 5 9-5-9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg>
+          </button>
+          <div>
+            <input id="projectName" class="project-name" value="Nouveau projet" aria-label="Nom du projet" />
+            <span id="saveStatus" class="save-status">Enregistré localement</span>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <div class="history-actions" aria-label="Historique">
+            <button class="icon-button" id="undoButton" aria-label="Annuler" disabled>
+              <svg viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M4 12h9a6 6 0 0 1 6 6"/></svg>
+            </button>
+            <button class="icon-button" id="redoButton" aria-label="Rétablir" disabled>
+              <svg viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M20 12h-9a6 6 0 0 0-6 6"/></svg>
+            </button>
+          </div>
+          <button class="icon-button app-theme-button" id="appThemeButton" type="button" aria-label="Changer le thème de l’interface" title="Thème de l’interface : Clair">
+            <span id="appThemeIcon" aria-hidden="true">☀</span>
+          </button>
+          <button class="button reset-button" id="resetProjectButton" title="Effacer le projet et revenir au départ">
+            <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/></svg>
+            <span>Nouveau</span>
+          </button>
+          <button class="button ai-chat-button" id="chatToggleButton">
+            <span aria-hidden="true">✦</span>
+            <span>Assistant IA</span>
+          </button>
+          <button class="button ghost" id="previewButton">
+            <svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></svg>
+            <span>Aperçu</span>
+          </button>
+          <button class="button primary" id="exportButton">
+            <span>Créer le site</span>
+            <svg viewBox="0 0 24 24"><path d="M5 12h14M14 7l5 5-5 5"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="left-panel" id="leftPanel">
+          <div class="panel-tabs" role="tablist" aria-label="Panneau gauche">
+            <button class="panel-tab active" role="tab" aria-selected="true" data-left-tab="layers">Calques</button>
+            <button class="panel-tab" role="tab" aria-selected="false" data-left-tab="insert">Ajouter</button>
+          </div>
+
+          <div class="left-content" id="layersPanel">
+            <div class="panel-title-row">
+              <span>Pages</span>
+              <button class="small-icon-button" id="addPageButton" aria-label="Ajouter une page">+</button>
+            </div>
+            <div id="pagesList" class="pages-list" aria-label="Pages du site"></div>
+            <div class="panel-title-row layers-title-row">
+              <span>Calques de la page</span>
+              <button class="small-icon-button" id="addSectionButton" aria-label="Ajouter une section">+</button>
+            </div>
+            <div id="layersTree" class="layers-tree" aria-label="Arborescence de la page"></div>
+          </div>
+
+          <div class="left-content hidden" id="insertPanel">
+            <p class="insert-help">Glissez un bloc sur le canevas ou cliquez pour l’ajouter.</p>
+            <div class="block-grid" id="blockGrid">
+              <button data-add-type="heading"><span class="block-symbol">T</span>Titre</button>
+              <button data-add-type="text"><span class="block-symbol">¶</span>Texte</button>
+              <button data-add-type="button"><span class="block-symbol">↗</span>Bouton</button>
+              <button data-add-type="card"><span class="block-symbol">▤</span>Carte</button>
+              <button data-add-type="image"><span class="block-symbol">▧</span>Image</button>
+              <button data-add-type="divider"><span class="block-symbol">―</span>Séparateur</button>
+            </div>
+          </div>
+
+          <div class="font-card">
+            <div class="font-card-heading">
+              <span class="font-sample" aria-hidden="true">Aa</span>
+              <span><strong>Typographie</strong><small>Google Fonts</small></span>
+            </div>
+            <label for="fontSelect">Police du site</label>
+            <select id="fontSelect" disabled aria-describedby="fontStatus">
+              <option value="">Chargement des polices...</option>
+            </select>
+            <span id="fontStatus">Créez un projet pour choisir une police.</span>
+          </div>
+
+          <div class="ai-status-card">
+            <span id="aiStatusDot" class="status-dot"></span>
+            <div class="ai-status-content">
+              <strong id="aiStatusTitle">Vérification de LM Studio</strong>
+              <span id="aiStatusText">Connexion en cours...</span>
+              <label class="model-picker" for="modelSelect">
+                <span>Modèle</span>
+                <select id="modelSelect" disabled>
+                  <option value="">Automatique</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </aside>
+
+        <section class="stage" aria-label="Éditeur visuel">
+          <div class="stage-toolbar">
+            <div class="viewport-switcher" role="group" aria-label="Taille de l’aperçu">
+              <button class="active" data-viewport="desktop" aria-label="Vue ordinateur">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              </button>
+              <button data-viewport="tablet" aria-label="Vue tablette">
+                <svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M11 18h2"/></svg>
+              </button>
+              <button data-viewport="mobile" aria-label="Vue mobile">
+                <svg viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>
+              </button>
+            </div>
+            <div class="zoom-control">
+              <button id="zoomOut" aria-label="Réduire le zoom">−</button>
+              <span id="zoomValue">78%</span>
+              <button id="zoomIn" aria-label="Augmenter le zoom">+</button>
+            </div>
+          </div>
+
+          <div class="canvas-scroller" id="canvasScroller">
+            <div class="canvas-frame viewport-desktop" id="canvasFrame">
+              <div id="canvas" class="canvas"></div>
+            </div>
+          </div>
+
+          <div class="selection-prompt hidden" id="selectionPrompt">
+            <div class="selection-chip"><span id="selectionPromptLabel">Élément</span><button id="clearSelection" aria-label="Désélectionner">×</button></div>
+            <input id="elementPrompt" placeholder="Ex. rends ce bouton plus arrondi et ajoute une ombre..." aria-label="Instruction IA pour l’élément" />
+            <button id="generateElementButton" aria-label="Modifier avec l’IA">
+              <svg viewBox="0 0 24 24"><path d="m12 3 1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/></svg>
+            </button>
+          </div>
+        </section>
+
+        <aside class="right-panel" id="rightPanel">
+          <div class="right-header">
+            <div>
+              <span class="eyebrow">PROPRIÉTÉS</span>
+              <strong id="selectedLabel">Aucune sélection</strong>
+            </div>
+            <button class="small-icon-button mobile-only" id="closeInspector" aria-label="Fermer">×</button>
+          </div>
+          <div id="emptyInspector" class="empty-inspector">
+            <div class="empty-icon">◇</div>
+            <strong>Sélectionnez un élément</strong>
+            <p>Cliquez sur un titre, un bouton ou une section pour modifier son apparence.</p>
+          </div>
+          <form id="inspectorForm" class="inspector-form hidden">
+            <section class="control-section" id="contentControls">
+              <button type="button" class="section-heading expanded">Contenu <span>⌃</span></button>
+              <div class="section-body">
+                <label class="field full"><span>Texte</span><textarea id="contentInput" rows="3"></textarea></label>
+                <label class="field full" id="hrefField"><span>Lien</span><input id="hrefInput" type="text" placeholder="#section" /></label>
+              </div>
+            </section>
+
+            <section class="control-section">
+              <button type="button" class="section-heading expanded">Mise en page <span>⌃</span></button>
+              <div class="section-body two-columns">
+                <label class="field"><span>Largeur</span><div class="unit-input"><input id="widthInput" type="number" min="0" max="1400" /><em>px</em></div></label>
+                <label class="field"><span>Taille</span><div class="unit-input"><input id="fontSizeInput" type="number" min="8" max="160" /><em>px</em></div></label>
+                <label class="field"><span>Arrondi</span><div class="unit-input"><input id="radiusInput" type="number" min="0" max="999" /><em>px</em></div></label>
+                <label class="field"><span>Espacement</span><div class="unit-input"><input id="gapInput" type="number" min="0" max="160" /><em>px</em></div></label>
+              </div>
+              <div class="align-control" role="group" aria-label="Alignement du texte">
+                <button type="button" data-align="left" aria-label="Aligner à gauche">≡</button>
+                <button type="button" data-align="center" aria-label="Centrer">≡</button>
+                <button type="button" data-align="right" aria-label="Aligner à droite">≡</button>
+              </div>
+            </section>
+
+            <section class="control-section">
+              <button type="button" class="section-heading expanded">Apparence <span>⌃</span></button>
+              <div class="section-body">
+                <label class="color-field"><span>Texte</span><span class="color-input-wrap"><input id="textColorInput" type="color" /><input id="textColorHex" type="text" maxlength="9" /></span></label>
+                <label class="color-field"><span>Fond</span><span class="color-input-wrap"><input id="backgroundInput" type="color" /><input id="backgroundHex" type="text" maxlength="9" /></span></label>
+                <label class="field full"><span>Effet au survol</span><select id="effectInput"><option value="none">Aucun</option><option value="lift">Élévation</option><option value="scale">Agrandissement</option><option value="glow">Lueur</option></select></label>
+              </div>
+            </section>
+
+            <div class="element-actions">
+              <button type="button" id="moveUpButton">↑ Monter</button>
+              <button type="button" id="moveDownButton">↓ Descendre</button>
+              <button type="button" id="duplicateButton">Dupliquer</button>
+              <button type="button" id="deleteButton" class="danger">Supprimer</button>
+            </div>
+          </form>
+        </aside>
+      </main>
+    </div>
+
+    <aside class="chat-drawer" id="chatDrawer" aria-label="Assistant IA d'édition" aria-hidden="true">
+      <div class="chat-header">
+        <div><span class="chat-spark">✦</span><span><strong>Assistant IA</strong><small>Modifie le site à partir de vos demandes</small></span></div>
+        <button id="closeChatButton" aria-label="Fermer l’assistant">×</button>
+      </div>
+      <div class="chat-messages" id="chatMessages" aria-live="polite">
+        <div class="chat-message assistant"><span class="message-avatar">✦</span><div>Bonjour. Demandez-moi de modifier une page, un contenu ou le style du site. Je peux aussi simplement vous conseiller.</div></div>
+      </div>
+      <div class="chat-suggestions" id="chatSuggestions">
+        <button>Ajoute une page Tarifs</button>
+        <button>Rends la page d'accueil plus concise</button>
+        <button>Améliore le parcours utilisateur</button>
+      </div>
+      <form class="chat-composer" id="chatForm">
+        <textarea id="chatInput" rows="2" placeholder="Ex. Ajoute une page Tarifs avec trois offres..." required></textarea>
+        <button type="submit" aria-label="Envoyer à l'assistant IA">↑</button>
+      </form>
+    </aside>
+
+    <dialog id="pageDialog" class="page-dialog">
+      <form method="dialog" id="pageForm">
+        <div class="dialog-heading"><div><span>Nouvelle page</span><strong>Ajouter une page au site</strong></div><button type="button" id="closePageDialog" aria-label="Fermer">×</button></div>
+        <label>Nom de la page<input id="pageNameInput" placeholder="Ex. Tarifs" required /></label>
+        <label>Description facultative<textarea id="pageDescriptionInput" rows="3" placeholder="Ex. Présenter les trois formules et répondre aux questions fréquentes"></textarea></label>
+        <p>La page sera créée avec une structure de départ cohérente avec le thème actuel.</p>
+        <div class="dialog-actions"><button type="button" id="cancelPageButton">Annuler</button><button id="createPageButton" value="default">Créer la page</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="welcomeDialog" class="welcome-dialog">
+      <form method="dialog" class="welcome-card" id="welcomeForm">
+        <div class="welcome-visual">
+          <div class="live-preview-heading">
+            <span><i></i> APERÇU EN DIRECT</span>
+            <strong id="onboardingPreviewStatus">Décrivez le header pour commencer</strong>
+          </div>
+          <div class="onboarding-preview" id="onboardingLivePreview" aria-live="polite">
+            <div class="preview-placeholder">
+              <span>✦</span>
+              <strong>Votre wireframe apparaîtra ici</strong>
+              <small>Chaque prompt construit une partie sans remplacer les précédentes.</small>
+            </div>
+          </div>
+          <div class="preview-page-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+        </div>
+        <div class="welcome-copy">
+          <span class="welcome-kicker">ONBOARDING GUIDÉ</span>
+          <div class="onboarding-heading">
+            <h1>Construisons votre site<br/><em>une partie à la fois.</em></h1>
+            <span id="onboardingCounter">1 / 3</span>
+          </div>
+          <p>L’IA génère séparément l’en-tête, le contenu principal puis le pied de page. À chaque étape, décrivez précisément ce que vous imaginez.</p>
+          <div class="onboarding-progress" aria-label="Progression de l’onboarding">
+            <button type="button" class="active" data-onboarding-go="0"><span>1</span>Header</button>
+            <i></i>
+            <button type="button" data-onboarding-go="1"><span>2</span>Main</button>
+            <i></i>
+            <button type="button" data-onboarding-go="2"><span>3</span>Footer</button>
+          </div>
+
+          <section class="onboarding-panel" data-onboarding-panel="0">
+            <span class="step-eyebrow">ÉTAPE 1 · PREMIÈRE IMPRESSION</span>
+            <label for="headerBriefInput">Décrivez votre en-tête</label>
+            <textarea id="headerBriefInput" rows="3" placeholder="Ex. Un menu minimal avec le logo à gauche, trois liens, puis un grand hero avec une promesse claire et un bouton Réserver." required></textarea>
+            <fieldset class="layout-choices">
+              <legend>Composition du header</legend>
+              <label><input type="radio" name="headerLayout" value="split" checked><span><b>Split</b><small>Texte + visuel</small></span></label>
+              <label><input type="radio" name="headerLayout" value="centered"><span><b>Centré</b><small>Impact direct</small></span></label>
+              <label><input type="radio" name="headerLayout" value="editorial"><span><b>Éditorial</b><small>Asymétrique</small></span></label>
+              <label><input type="radio" name="headerLayout" value="minimal"><span><b>Minimal</b><small>Très épuré</small></span></label>
+            </fieldset>
+          </section>
+          <section class="onboarding-panel hidden" data-onboarding-panel="1">
+            <span class="step-eyebrow">ÉTAPE 2 · CONTENU</span>
+            <label for="mainBriefInput">Décrivez la partie principale</label>
+            <textarea id="mainBriefInput" rows="3" placeholder="Ex. Une section avec nos trois services, quelques chiffres de confiance, deux témoignages et un appel à prendre rendez-vous." required></textarea>
+            <fieldset class="layout-choices">
+              <legend>Composition du contenu</legend>
+              <label><input type="radio" name="mainLayout" value="bento" checked><span><b>Bento</b><small>Blocs variés</small></span></label>
+              <label><input type="radio" name="mainLayout" value="alternating"><span><b>Alterné</b><small>Texte / image</small></span></label>
+              <label><input type="radio" name="mainLayout" value="editorial"><span><b>Magazine</b><small>Rythme libre</small></span></label>
+              <label><input type="radio" name="mainLayout" value="stacked"><span><b>Story</b><small>Lecture verticale</small></span></label>
+            </fieldset>
+          </section>
+          <section class="onboarding-panel hidden" data-onboarding-panel="2">
+            <span class="step-eyebrow">ÉTAPE 3 · CONCLUSION</span>
+            <label for="footerBriefInput">Décrivez votre pied de page</label>
+            <textarea id="footerBriefInput" rows="3" placeholder="Ex. Un footer sombre avec l’adresse, les horaires, Instagram, un lien de contact et les mentions légales." required></textarea>
+            <fieldset class="layout-choices">
+              <legend>Composition du footer</legend>
+              <label><input type="radio" name="footerLayout" value="columns" checked><span><b>Colonnes</b><small>Informations riches</small></span></label>
+              <label><input type="radio" name="footerLayout" value="centered"><span><b>Centré</b><small>Signature simple</small></span></label>
+              <label><input type="radio" name="footerLayout" value="cta"><span><b>Grand CTA</b><small>Conversion finale</small></span></label>
+              <label><input type="radio" name="footerLayout" value="minimal"><span><b>Minimal</b><small>Une seule ligne</small></span></label>
+            </fieldset>
+          </section>
+
+          <div class="layout-global-control">
+            <label for="layoutDensity">Densité</label>
+            <select id="layoutDensity"><option value="airy">Aérée</option><option value="balanced" selected>Équilibrée</option><option value="compact">Compacte</option></select>
+            <label class="creative-toggle"><input id="creativeLayout" type="checkbox" checked><span>Autoriser une composition audacieuse</span></label>
+          </div>
+
+          <div class="onboarding-actions">
+            <button type="button" class="onboarding-back hidden" id="onboardingBack">← Retour</button>
+            <button class="generate-main" id="generateSiteButton" value="default">
+              <span class="generate-icon">✦</span><span><strong id="onboardingActionTitle">Générer le header</strong><small id="onboardingActionHint">Puis prévisualiser et continuer</small></span><span class="arrow">→</span>
+            </button>
+          </div>
+          <button class="skip-button" type="button" id="skipWelcome">Explorer avec un exemple</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="previewDialog" class="preview-dialog">
+      <div class="preview-topbar">
+        <strong>Aperçu du site</strong>
+        <div class="preview-actions"><button id="openExportFromPreview">Télécharger le site</button><button id="closePreview" aria-label="Fermer l’aperçu">×</button></div>
+      </div>
+      <iframe id="previewFrame" title="Aperçu du site généré"></iframe>
+    </dialog>
+
+    <div class="loading-overlay hidden" id="loadingOverlay" role="status" aria-live="polite">
+      <div class="loader-orbit"><span></span><i>✦</i></div>
+      <strong id="loadingTitle">L’IA dessine votre site</strong>
+      <p id="loadingText">Structure, parcours et contenu sont en cours de création...</p>
+      <div id="loadingProgress" class="loading-progress hidden" aria-label="Progression de la génération">
+        <div class="loading-progress-meta">
+          <span id="loadingStep">Préparation</span>
+          <strong id="loadingPercent">0 %</strong>
+        </div>
+        <div class="loading-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="loadingProgressFill"></span>
+        </div>
+        <div class="generation-stages hidden" id="generationStages">
+          <div data-generation-stage="header"><span>1</span><strong>Header</strong><small>En attente</small></div>
+          <div data-generation-stage="main"><span>2</span><strong>Main</strong><small>En attente</small></div>
+          <div data-generation-stage="footer"><span>3</span><strong>Footer</strong><small>En attente</small></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
