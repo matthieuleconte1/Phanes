@@ -4,12 +4,16 @@ import assert from "node:assert/strict";
 process.env.LM_STUDIO_URL = "http://127.0.0.1:1";
 const { server } = await import("../server.mjs");
 
-test("HTTP server serves the editor and generates a project", async (context) => {
+test("HTTP server serves the editor and generates a project", { timeout: 30000 }, async (context) => {
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
   });
-  context.after(() => new Promise((resolve) => server.close(resolve)));
+  context.after(() => {
+    const closed = new Promise((resolve) => server.close(resolve));
+    server.closeAllConnections();
+    return closed;
+  });
 
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
@@ -17,7 +21,7 @@ test("HTTP server serves the editor and generates a project", async (context) =>
   const pageResponse = await fetch(`${baseUrl}/`);
   assert.equal(pageResponse.status, 200);
   const page = await pageResponse.text();
-  assert.match(page, /Atelier AI/);
+  assert.match(page, /Phanès/);
   assert.match(page, /Décrivez votre en-tête/);
   assert.match(page, /Décrivez la partie principale/);
   assert.match(page, /Décrivez votre pied de page/);
@@ -34,6 +38,13 @@ test("HTTP server serves the editor and generates a project", async (context) =>
   assert.match(app, /Playfair Display/);
   assert.match(app, /googleFontUrl/);
   assert.match(app, /googleFontStylesheet/);
+
+  for (const modulePath of ["custom-runtime.js", "media.js", "export-site.js"]) {
+    const moduleResponse = await fetch(`${baseUrl}/js/${modulePath}`);
+    assert.equal(moduleResponse.status, 200);
+    assert.match(moduleResponse.headers.get("content-type"), /text\/javascript/);
+    assert.ok((await moduleResponse.text()).length > 20);
+  }
 
   const generationResponse = await fetch(`${baseUrl}/api/generate`, {
     method: "POST",

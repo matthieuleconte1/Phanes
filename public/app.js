@@ -1,3 +1,7 @@
+import { customRuntimeDocument } from "./js/custom-runtime.js";
+import { buildExportHtml as createExportHtml } from "./js/export-site.js";
+import { optimizeImageFile, safeImageSource } from "./js/media.js";
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -24,7 +28,7 @@ const state = {
 
 const typeNames = {
   navbar: "Navigation", hero: "En-tête", features: "Fonctionnalités", cta: "Appel à l’action", footer: "Pied de page", content: "Section",
-  logo: "Logo", nav: "Liens", badge: "Badge", heading: "Titre", text: "Texte", button: "Bouton", card: "Carte", image: "Image", divider: "Séparateur"
+  logo: "Logo", nav: "Liens", badge: "Badge", heading: "Titre", text: "Texte", button: "Bouton", card: "Carte simple", image: "Image", divider: "Séparateur", custom: "Bloc HTML/CSS/JS"
 };
 
 const SYSTEM_FONT = "Inter, system-ui, sans-serif";
@@ -80,7 +84,16 @@ function cssLength(value) {
 }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function makeId(prefix) { return `${prefix}-${Math.random().toString(36).slice(2, 9)}`; }
-function escapeHtml(value = "") { return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }
+window.addEventListener("message", (event) => {
+  const message = event.data;
+  if (!message || typeof message !== "object" || typeof message.id !== "string") return;
+  const frame = canvas.querySelector(`iframe[data-custom-id="${CSS.escape(message.id)}"]`);
+  if (!frame || frame.contentWindow !== event.source) return;
+  if (message.type === "phanes-custom-height") {
+    frame.style.height = `${clamp(Number(message.height) || 120, 80, 1400)}px`;
+  }
+  if (message.type === "phanes-custom-select" && findNode(message.id)) selectNode(message.id);
+});
 function safeColor(value, fallback = "#000000") { return /^#[0-9a-f]{6}$/i.test(value || "") ? value : fallback; }
 function safeFontStack(value) { return FONT_BY_STACK.has(value) ? value : SYSTEM_FONT; }
 function applyUiTheme(themeId, persist = true) {
@@ -401,13 +414,18 @@ function readStoredJson(key, fallback) {
 
 function saveProject() {
   if (!state.project) return;
-  localStorage.setItem("atelier-ai-project", JSON.stringify(state.project));
-  localStorage.setItem("atelier-ai-brief", state.brief);
-  localStorage.setItem("atelier-ai-current-page", state.currentPageId || "");
-  localStorage.setItem("atelier-ai-chat", JSON.stringify(state.chatHistory.slice(-40)));
-  localStorage.setItem("atelier-ai-model", state.selectedModel || "");
-  saveWorkspace();
-  $("#saveStatus").textContent = "Enregistré localement";
+  try {
+    localStorage.setItem("atelier-ai-project", JSON.stringify(state.project));
+    localStorage.setItem("atelier-ai-brief", state.brief);
+    localStorage.setItem("atelier-ai-current-page", state.currentPageId || "");
+    localStorage.setItem("atelier-ai-chat", JSON.stringify(state.chatHistory.slice(-40)));
+    localStorage.setItem("atelier-ai-model", state.selectedModel || "");
+    saveWorkspace();
+    $("#saveStatus").textContent = "Enregistré localement";
+  } catch {
+    $("#saveStatus").textContent = "Stockage local saturé";
+    showToast("Projet trop volumineux", "Retirez une image ou utilisez une image plus légère.", "warning");
+  }
 }
 
 function resetProject() {
@@ -486,7 +504,8 @@ function styleObject(styles = {}, kind = "element", compact = false) {
   if (styles.gap !== undefined) result.gap = px(styles.gap);
   if (styles.gridColumn) result.gridColumn = styles.gridColumn;
   if (kind === "section") {
-    result.display = styles.layout === "grid" ? "grid" : "flex";
+    result.display = styles.layout === "free" && !compact ? "block" : styles.layout === "grid" ? "grid" : "flex";
+    if (styles.layout === "free" && !compact) result.minHeight = px(styles.freeHeight || styles.minHeight || 600);
     result.flexDirection = styles.layout === "row" && !compact ? "row" : "column";
     if (styles.layout === "grid") {
       const customTemplate = typeof styles.gridTemplateColumns === "string" && /^[\d.a-z%\s(),-]+$/i.test(styles.gridTemplateColumns) ? styles.gridTemplateColumns : "";
@@ -500,16 +519,42 @@ function styleObject(styles = {}, kind = "element", compact = false) {
   return result;
 }
 
+function applyFreePosition(element, styles = {}, compact = false) {
+  if (compact) return;
+  element.style.left = `${clamp(number(styles.x), 0, 100)}%`;
+  element.style.top = px(Math.max(0, number(styles.y)));
+  if (styles.zIndex !== undefined) element.style.zIndex = String(Math.round(number(styles.zIndex, 1)));
+}
+
+function freeSectionMeasurements(section, sectionNode) {
+  const measured = new Map();
+  let freeHeight = number(section.styles?.freeHeight, 600);
+  if (!sectionNode) return { measured, freeHeight };
+  const sectionRect = sectionNode.getBoundingClientRect();
+  section.children.forEach((child, index) => {
+    const childNode = sectionNode.querySelector(`.canvas-element[data-id="${CSS.escape(child.id)}"]`);
+    if (!childNode) return;
+    const childRect = childNode.getBoundingClientRect();
+    const x = clamp(((childRect.left - sectionRect.left) / Math.max(1, sectionRect.width)) * 100, 0, 92);
+    const y = Math.max(0, (childRect.top - sectionRect.top) / state.zoom);
+    const width = Math.min(1400, Math.max(40, childRect.width / state.zoom));
+    const minHeight = Math.min(3000, Math.max(18, childRect.height / state.zoom));
+    measured.set(child.id, { x: Math.round(x * 10) / 10, y: Math.round(y), width: Math.round(width), minHeight: Math.round(minHeight), zIndex: index + 1 });
+    freeHeight = Math.max(freeHeight, y + minHeight + 60);
+  });
+  return { measured, freeHeight };
+}
+
 function applyStyles(element, styles) {
   Object.assign(element.style, styles);
 }
 
-function createElementNode(item, compact) {
+function createElementNode(item, compact, freeLayout = false) {
   const wrapper = document.createElement("div");
   wrapper.className = `canvas-element canvas-${item.type}${item.effect && item.effect !== "none" ? ` effect-${item.effect}` : ""}`;
   wrapper.dataset.id = item.id;
   wrapper.dataset.kind = "element";
-  wrapper.draggable = true;
+  wrapper.draggable = !freeLayout;
   wrapper.tabIndex = 0;
   wrapper.setAttribute("role", "button");
   wrapper.setAttribute("aria-label", `${typeNames[item.type] || item.type}: ${item.content.slice(0, 50)}`);
@@ -519,9 +564,40 @@ function createElementNode(item, compact) {
   tag.className = "selection-tag";
   tag.textContent = typeNames[item.type] || item.type;
   wrapper.append(tag);
+  if (freeLayout) {
+    const handle = document.createElement("button");
+    handle.type = "button";
+    handle.className = "free-drag-handle";
+    handle.textContent = "✥";
+    handle.title = "Déplacer librement";
+    handle.setAttribute("aria-label", `Déplacer ${typeNames[item.type] || item.type}`);
+    wrapper.append(handle);
+    addFreePositionEvents(handle, wrapper, item.id);
+
+    const resizeHandle = document.createElement("button");
+    resizeHandle.type = "button";
+    resizeHandle.className = "free-resize-handle";
+    resizeHandle.textContent = "↘";
+    resizeHandle.title = "Redimensionner librement";
+    resizeHandle.setAttribute("aria-label", `Redimensionner ${typeNames[item.type] || item.type}`);
+    wrapper.append(resizeHandle);
+    addFreeResizeEvents(resizeHandle, wrapper, item.id);
+
+    wrapper.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("button, input, textarea, select, iframe, a, .free-resize-handle")) return;
+      beginFreeMove(event, wrapper, wrapper, item.id);
+    });
+  }
 
   let content;
-  if (item.type === "nav") {
+  if (item.type === "custom") {
+    content = document.createElement("iframe");
+    content.className = "custom-canvas-frame";
+    content.dataset.customId = item.id;
+    content.title = item.content || "Bloc personnalisé";
+    content.setAttribute("sandbox", "allow-scripts allow-forms allow-modals allow-popups");
+    content.srcdoc = customRuntimeDocument(item);
+  } else if (item.type === "nav") {
     content = document.createElement("div");
     content.className = "site-nav-links";
     item.content.split("|").forEach((label) => { const span = document.createElement("span"); span.textContent = label.trim(); content.append(span); });
@@ -534,7 +610,14 @@ function createElementNode(item, compact) {
   } else if (item.type === "image") {
     content = document.createElement("div");
     content.className = "site-image";
-    content.textContent = item.content || "Aperçu de l’image";
+    const source = safeImageSource(item.src);
+    if (source) {
+      const image = document.createElement("img");
+      image.src = source;
+      image.alt = item.alt || item.content || "Image";
+      image.loading = "lazy";
+      content.append(image);
+    } else content.textContent = item.content || "Cliquez pour ajouter une image";
   } else if (item.type === "divider") {
     content = document.createElement("div");
     content.className = "site-divider";
@@ -544,7 +627,7 @@ function createElementNode(item, compact) {
     if (item.type === "card") content.className = "site-card";
     content.textContent = item.content;
   }
-  if (item.type !== "image" && item.type !== "divider") {
+  if (!["image", "divider", "custom"].includes(item.type)) {
     content.style.margin = "0";
     content.style.color = "inherit";
     content.style.font = "inherit";
@@ -559,7 +642,7 @@ function createElementNode(item, compact) {
   wrapper.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectNode(item.id); }
   });
-  addDragEvents(wrapper);
+  if (!freeLayout) addDragEvents(wrapper);
   return wrapper;
 }
 
@@ -577,9 +660,10 @@ function renderCanvas() {
   currentPage()?.sections.forEach((section) => {
     const sectionNode = document.createElement("section");
     sectionNode.className = "canvas-section";
+    sectionNode.classList.toggle("layout-free", section.styles.layout === "free" && !compact);
     sectionNode.dataset.id = section.id;
     sectionNode.dataset.kind = "section";
-    sectionNode.draggable = true;
+    sectionNode.draggable = section.styles.layout !== "free";
     sectionNode.tabIndex = 0;
     sectionNode.setAttribute("aria-label", `Section ${typeNames[section.type] || section.type}`);
     applyStyles(sectionNode, styleObject(section.styles, "section", compact));
@@ -590,18 +674,161 @@ function renderCanvas() {
     sectionNode.append(tag);
 
     section.children.forEach((item, index) => {
-      const child = createElementNode(item, compact);
+      const freeLayout = section.styles.layout === "free" && !compact;
+      const child = createElementNode(item, compact, freeLayout);
+      if (freeLayout) applyFreePosition(child, item.styles, compact);
       if (section.styles.layout === "grid" && item.type === "heading") child.style.gridColumn = compact ? "auto" : `1 / span ${number(section.styles.columns, 3)}`;
       if (section.type === "navbar" && compact && item.type === "nav") child.style.display = "none";
       child.dataset.index = String(index);
       sectionNode.append(child);
     });
+    if (section.styles.layout === "free" && !compact) {
+      const resizeSection = document.createElement("button");
+      resizeSection.type = "button";
+      resizeSection.className = "free-section-resize";
+      resizeSection.title = "Modifier la hauteur de la section";
+      resizeSection.setAttribute("aria-label", `Modifier la hauteur de ${typeNames[section.type] || "la section"}`);
+      sectionNode.append(resizeSection);
+      addFreeSectionResizeEvents(resizeSection, sectionNode, section.id);
+    }
     sectionNode.addEventListener("click", () => selectNode(section.id));
     sectionNode.addEventListener("keydown", (event) => { if ((event.key === "Enter" || event.key === " ") && event.target === sectionNode) { event.preventDefault(); selectNode(section.id); } });
     addDragEvents(sectionNode);
     canvas.append(sectionNode);
   });
   refreshSelectionClasses();
+}
+
+function addFreePositionEvents(handle, node, elementId) {
+  handle.addEventListener("pointerdown", (event) => beginFreeMove(event, handle, node, elementId));
+}
+
+function beginFreeMove(event, activator, node, elementId) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const found = findNode(elementId);
+    const sectionNode = node.closest(".canvas-section");
+    if (!found || !sectionNode || found.section.styles.layout !== "free") return;
+    selectNode(elementId);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const initialX = clamp(number(found.node.styles?.x), 0, 100);
+    const initialY = Math.max(0, number(found.node.styles?.y));
+    const sectionRect = sectionNode.getBoundingClientRect();
+    let nextX = initialX;
+    let nextY = initialY;
+    let moved = false;
+    node.classList.add("free-moving");
+    activator.setPointerCapture(event.pointerId);
+    const move = (moveEvent) => {
+      moved = true;
+      const maxX = Math.max(0, ((sectionRect.width - node.getBoundingClientRect().width) / Math.max(1, sectionRect.width)) * 100);
+      nextX = clamp(initialX + ((moveEvent.clientX - startX) / Math.max(1, sectionRect.width)) * 100, 0, maxX);
+      nextY = Math.max(0, initialY + (moveEvent.clientY - startY) / state.zoom);
+      node.style.left = `${nextX}%`;
+      node.style.top = `${nextY}px`;
+    };
+    const stop = () => {
+      activator.removeEventListener("pointermove", move);
+      activator.removeEventListener("pointerup", stop);
+      activator.removeEventListener("pointercancel", stop);
+      node.classList.remove("free-moving");
+      if (!moved) return;
+      commit(() => {
+        const latest = findNode(elementId)?.node;
+        if (!latest) return;
+        latest.styles ||= {};
+        latest.styles.x = Math.round(nextX * 10) / 10;
+        latest.styles.y = Math.round(nextY);
+        const latestSection = findNode(elementId)?.section;
+        if (latestSection) latestSection.styles.freeHeight = Math.max(number(latestSection.styles.freeHeight, 600), Math.round(nextY + node.getBoundingClientRect().height / state.zoom + 40));
+      });
+    };
+    activator.addEventListener("pointermove", move);
+    activator.addEventListener("pointerup", stop);
+    activator.addEventListener("pointercancel", stop);
+}
+
+function addFreeResizeEvents(handle, node, elementId) {
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const found = findNode(elementId);
+    const sectionNode = node.closest(".canvas-section");
+    if (!found || !sectionNode || found.section.styles.layout !== "free") return;
+    selectNode(elementId);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const initialRect = node.getBoundingClientRect();
+    const sectionRect = sectionNode.getBoundingClientRect();
+    const maxWidth = Math.max(40, (sectionRect.right - initialRect.left) / state.zoom);
+    let width = initialRect.width / state.zoom;
+    let minHeight = initialRect.height / state.zoom;
+    let resized = false;
+    node.classList.add("free-resizing");
+    handle.setPointerCapture(event.pointerId);
+    const move = (moveEvent) => {
+      resized = true;
+      width = clamp(initialRect.width / state.zoom + (moveEvent.clientX - startX) / state.zoom, 40, maxWidth);
+      minHeight = clamp(initialRect.height / state.zoom + (moveEvent.clientY - startY) / state.zoom, 18, 3000);
+      node.style.width = `${width}px`;
+      node.style.minHeight = `${minHeight}px`;
+    };
+    const stop = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+      node.classList.remove("free-resizing");
+      if (!resized) return;
+      commit(() => {
+        const latest = findNode(elementId);
+        if (!latest) return;
+        latest.node.styles ||= {};
+        latest.node.styles.width = Math.round(width);
+        latest.node.styles.minHeight = Math.round(minHeight);
+        latest.section.styles.freeHeight = Math.max(number(latest.section.styles.freeHeight, 600), Math.round(number(latest.node.styles.y) + minHeight + 40));
+      });
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  });
+}
+
+function addFreeSectionResizeEvents(handle, sectionNode, sectionId) {
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectNode(sectionId);
+    const found = findNode(sectionId);
+    if (!found || found.node.styles?.layout !== "free") return;
+    const startY = event.clientY;
+    const initialHeight = sectionNode.getBoundingClientRect().height / state.zoom;
+    let freeHeight = initialHeight;
+    let resized = false;
+    handle.setPointerCapture(event.pointerId);
+    const move = (moveEvent) => {
+      resized = true;
+      freeHeight = clamp(initialHeight + (moveEvent.clientY - startY) / state.zoom, 200, 3000);
+      sectionNode.style.minHeight = `${freeHeight}px`;
+    };
+    const stop = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+      if (!resized) return;
+      commit(() => {
+        const latest = findNode(sectionId)?.node;
+        if (latest) latest.styles.freeHeight = Math.round(freeHeight);
+      });
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  });
 }
 
 function addDragEvents(node) {
@@ -658,7 +885,7 @@ function renderLayers() {
   if (!state.project) return;
   currentPage()?.sections.forEach((section) => {
     tree.append(layerButton(section, 0, "▦"));
-    section.children.forEach((item) => tree.append(layerButton(item, 1, { heading: "T", text: "¶", button: "▭", card: "▤", image: "▧", logo: "◆", nav: "↔", badge: "◇", divider: "―" }[item.type] || "•")));
+    section.children.forEach((item) => tree.append(layerButton(item, 1, { heading: "T", text: "¶", button: "▭", card: "▤", image: "▧", logo: "◆", nav: "↔", badge: "◇", divider: "―", custom: "</>" }[item.type] || "•")));
   });
 }
 
@@ -773,12 +1000,30 @@ function renderInspector() {
   if (!found) { $("#selectedLabel").textContent = "Aucune sélection"; return; }
   const { node, kind } = found;
   const styles = node.styles || {};
+  const sectionLayout = kind === "section" ? styles.layout || "column" : found.section.styles?.layout || "column";
+  const isFreeElement = kind === "element" && sectionLayout === "free";
   $("#selectedLabel").textContent = typeNames[node.type] || node.type;
   $("#contentControls").classList.toggle("hidden", kind === "section");
+  $("#imageControls").classList.toggle("hidden", kind !== "element" || node.type !== "image");
+  $("#customCodeControls").classList.toggle("hidden", kind !== "element" || node.type !== "custom");
   $("#contentInput").value = node.content || "";
+  $("#imageSrcInput").value = node.type === "image" && !String(node.src || "").startsWith("data:") ? node.src || "" : "";
+  $("#imageAltInput").value = node.type === "image" ? node.alt || node.content || "" : "";
+  $("#removeImageButton").classList.toggle("hidden", node.type !== "image" || !node.src);
+  $("#customHtmlInput").value = node.type === "custom" ? node.html || "" : "";
+  $("#customCssInput").value = node.type === "custom" ? node.css || "" : "";
+  $("#customJsInput").value = node.type === "custom" ? node.js || "" : "";
   $("#hrefInput").value = node.href || "";
   $("#hrefField").classList.toggle("hidden", node.type !== "button");
+  $("#layoutModeInput").value = sectionLayout;
+  $("#positionXField").classList.toggle("hidden", !isFreeElement);
+  $("#positionYField").classList.toggle("hidden", !isFreeElement);
+  $("#freeHeightField").classList.toggle("hidden", kind !== "section" || sectionLayout !== "free");
+  $("#positionXInput").value = isFreeElement ? number(styles.x) : "";
+  $("#positionYInput").value = isFreeElement ? number(styles.y) : "";
+  $("#freeHeightInput").value = kind === "section" && sectionLayout === "free" ? number(styles.freeHeight, 600) : "";
   $("#widthInput").value = styles.width || styles.maxWidth || "";
+  $("#heightInput").value = styles.minHeight || "";
   $("#fontSizeInput").value = styles.fontSize || "";
   $("#radiusInput").value = styles.borderRadius || "";
   $("#gapInput").value = styles.gap || "";
@@ -806,6 +1051,14 @@ function renderAll() {
   $$("[data-viewport]").forEach((button) => button.classList.toggle("active", button.dataset.viewport === state.viewport));
   $("#undoButton").disabled = state.history.length === 0;
   $("#redoButton").disabled = state.future.length === 0;
+  const freePageButton = $("#freePageButton");
+  const pageIsFree = Boolean(currentPage()?.sections.length) && currentPage().sections.every((section) => section.styles?.layout === "free");
+  freePageButton.classList.toggle("active", pageIsFree);
+  freePageButton.setAttribute("aria-pressed", String(pageIsFree));
+  freePageButton.disabled = !state.project || state.viewport === "mobile" || pageIsFree;
+  freePageButton.title = state.viewport === "mobile"
+    ? "L’édition libre est disponible en vue ordinateur ou tablette"
+    : pageIsFree ? "L’édition libre est active sur cette page" : "Déplacer et redimensionner librement tous les blocs de la page";
   renderCanvas();
   renderPages();
   renderLayers();
@@ -976,6 +1229,72 @@ function updateSelected(property, value, root = "styles") {
   });
 }
 
+function changeSelectedSectionLayout(layout) {
+  const found = findNode(state.selectedId);
+  if (!found || !["column", "row", "grid", "free"].includes(layout)) return;
+  const section = found.section;
+  const sectionNode = canvas.querySelector(`.canvas-section[data-id="${CSS.escape(section.id)}"]`);
+  const { measured, freeHeight } = layout === "free" && section.styles?.layout !== "free"
+    ? freeSectionMeasurements(section, sectionNode)
+    : { measured: new Map(), freeHeight: number(section.styles?.freeHeight, 600) };
+  commit(() => {
+    const latest = findNode(section.id)?.node;
+    if (!latest) return;
+    latest.styles ||= {};
+    latest.styles.layout = layout;
+    if (layout === "free") {
+      latest.styles.freeHeight = Math.round(freeHeight);
+      latest.children.forEach((child, index) => {
+        child.styles ||= {};
+        Object.assign(child.styles, measured.get(child.id) || {
+          x: child.styles.x ?? Math.min(80, 6 + (index % 3) * 30),
+          y: child.styles.y ?? 40 + Math.floor(index / 3) * 180,
+          zIndex: child.styles.zIndex ?? index + 1
+        });
+      });
+    }
+  });
+}
+
+function enableFreePageEditing() {
+  const page = currentPage();
+  if (!page || state.viewport === "mobile") return;
+  const layouts = new Map(page.sections.map((section) => {
+    const sectionNode = canvas.querySelector(`.canvas-section[data-id="${CSS.escape(section.id)}"]`);
+    return [section.id, freeSectionMeasurements(section, sectionNode)];
+  }));
+  commit(() => {
+    const latestPage = currentPage();
+    latestPage.sections.forEach((section) => {
+      const { measured, freeHeight } = layouts.get(section.id) || { measured: new Map(), freeHeight: 600 };
+      section.styles ||= {};
+      section.styles.layout = "free";
+      section.styles.freeHeight = Math.round(freeHeight);
+      section.children.forEach((child, index) => {
+        child.styles ||= {};
+        Object.assign(child.styles, measured.get(child.id) || {
+          x: child.styles.x ?? Math.min(80, 6 + (index % 3) * 30),
+          y: child.styles.y ?? 40 + Math.floor(index / 3) * 180,
+          width: child.styles.width ?? 280,
+          zIndex: child.styles.zIndex ?? index + 1
+        });
+      });
+    });
+  });
+  showToast("Édition libre activée", "Déplacez les blocs directement et utilisez la poignée ↘ pour les redimensionner.", "success");
+}
+
+function updateSelectedSectionStyle(property, value) {
+  const found = findNode(state.selectedId);
+  if (!found) return;
+  commit(() => {
+    const section = findNode(found.section.id)?.node;
+    if (!section) return;
+    section.styles ||= {};
+    section.styles[property] = value;
+  });
+}
+
 function moveSelected(direction) {
   const found = findNode(state.selectedId);
   if (!found) return;
@@ -1021,16 +1340,51 @@ function addElement(type) {
     text: { content: "Ajoutez ici votre texte. Cliquez pour le personnaliser.", styles: { fontSize: 16, color: "#626773", lineHeight: 1.6 } },
     button: { content: "En savoir plus", styles: { background: state.project.theme.accent, color: "#ffffff", borderRadius: 12, paddingY: 13, paddingX: 20 }, href: "#", effect: "lift" },
     card: { content: "Nouvelle carte\nUn contenu clair pour présenter une idée ou un service.", styles: { background: "#ffffff", borderRadius: 18, paddingY: 25, paddingX: 25 } },
-    image: { content: "Votre image", styles: { borderRadius: 18 } },
-    divider: { content: "", styles: {} }
+    image: { content: "Votre image", alt: "Votre image", styles: { borderRadius: 18, minHeight: 260 } },
+    divider: { content: "", styles: {} },
+    custom: {
+      content: "Composition libre HTML/CSS/JS",
+      html: '<article class="showcase"><p class="eyebrow">BLOC LIBRE</p><h3>Une composition sans gabarit</h3><p>Écrivez du HTML et du CSS normaux, puis ajoutez du JavaScript seulement si le composant en a besoin.</p><button type="button">Explorer</button></article>',
+      css: ".showcase{position:relative;overflow:hidden;padding:clamp(28px,6vw,72px);border-radius:28px;color:#fff;background:radial-gradient(circle at 85% 10%,#a99cff55,transparent 32%),linear-gradient(135deg,#17181c,#5549d8)}.eyebrow{margin:0 0 18px;font-size:12px;font-weight:800;letter-spacing:.16em;opacity:.7}.showcase h3{max-width:650px;margin:0;font-size:clamp(34px,7vw,72px);line-height:.96}.showcase>p:not(.eyebrow){max-width:560px;margin:24px 0;color:#e4e1ff;line-height:1.7}.showcase button{padding:12px 18px;border:0;border-radius:999px;font-weight:800;cursor:pointer}@media(max-width:600px){.showcase{border-radius:18px}}",
+      js: "const button = root.querySelector('button');\nbutton.addEventListener('click', () => { button.textContent = button.textContent === 'Explorer' ? 'Bloc actif' : 'Explorer'; });",
+      styles: { width: 900, minHeight: 280 }
+    }
   };
   const selected = findNode(state.selectedId);
   const sectionIndex = selected?.sectionIndex ?? Math.max(0, currentPage().sections.length - 2);
   commit((project) => {
     const item = { id: makeId(type), type, ...clone(defaults[type]) };
-    pageFrom(project).sections[sectionIndex].children.push(item);
+    const section = pageFrom(project).sections[sectionIndex];
+    if (section.styles?.layout === "free") {
+      item.styles ||= {};
+      item.styles.x = 10 + (section.children.length % 3) * 28;
+      item.styles.y = 40 + Math.floor(section.children.length / 3) * 180;
+      item.styles.zIndex = section.children.length + 1;
+    }
+    section.children.push(item);
     state.selectedId = item.id;
   });
+}
+
+async function importSelectedImage(file) {
+  const found = findNode(state.selectedId);
+  if (!found || found.kind !== "element" || found.node.type !== "image" || !file) return;
+  try {
+    const source = await optimizeImageFile(file);
+    const alt = file.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim() || "Image";
+    commit(() => {
+      const image = findNode(state.selectedId)?.node;
+      if (!image || image.type !== "image") return;
+      image.src = source;
+      image.alt = image.alt && image.alt !== "Votre image" ? image.alt : alt;
+      image.content = image.alt;
+    });
+    showToast("Image ajoutée", "L’image a été optimisée et enregistrée dans le projet.");
+  } catch (error) {
+    showToast("Image non ajoutée", error.message, "warning");
+  } finally {
+    $("#imageFileInput").value = "";
+  }
 }
 
 function addSection() {
@@ -1104,63 +1458,12 @@ function updateNavigationLabels(project) {
   })));
 }
 
-function cssFromStyles(styles = {}, section = false) {
-  const map = [];
-  const simple = { background: "background", color: "color", fontWeight: "font-weight", letterSpacing: "letter-spacing", lineHeight: "line-height", textAlign: "text-align", opacity: "opacity" };
-  Object.entries(simple).forEach(([key, css]) => { if (styles[key] !== undefined && styles[key] !== "") map.push(`${css}:${styles[key]}`); });
-  [["fontSize","font-size"],["borderRadius","border-radius"],["maxWidth","max-width"],["minHeight","min-height"],["width","width"],["gap","gap"]].forEach(([key, css]) => { const value = cssLength(styles[key]); if (value) map.push(`${css}:${value}`); });
-  if (styles.gridColumn) map.push(`grid-column:${styles.gridColumn}`);
-  if (styles.paddingY !== undefined) map.push(`padding-top:${number(styles.paddingY)}px`, `padding-bottom:${number(styles.paddingY)}px`);
-  if (styles.paddingX !== undefined) map.push(`padding-left:${number(styles.paddingX)}px`, `padding-right:${number(styles.paddingX)}px`);
-  if (section) {
-    map.push(`display:${styles.layout === "grid" ? "grid" : "flex"}`);
-    if (styles.layout === "grid") {
-      const customTemplate = typeof styles.gridTemplateColumns === "string" && /^[\d.a-z%\s(),-]+$/i.test(styles.gridTemplateColumns) ? styles.gridTemplateColumns : "";
-      map.push(`grid-template-columns:${customTemplate || `repeat(${number(styles.columns, 3)},minmax(0,1fr))`}`);
-    }
-    else map.push(`flex-direction:${styles.layout === "row" ? "row" : "column"}`);
-    map.push(`align-items:${({start:"flex-start",center:"center",end:"flex-end",stretch:"stretch"})[styles.align] || "flex-start"}`);
-    map.push(`justify-content:${({start:"flex-start",center:"center",end:"flex-end",between:"space-between"})[styles.justify] || "flex-start"}`);
-  }
-  return map.join(";");
-}
-
-function elementHtml(item) {
-  const style = cssFromStyles(item.styles);
-  const effect = item.effect && item.effect !== "none" ? ` effect-${item.effect}` : "";
-  if (item.type === "nav") return `<nav class="nav-links" style="${style}">${item.content.split("|").map((label, index) => {
-    const cleanLabel = label.trim();
-    const linkedPage = state.project.pages.find((page) => page.name.toLowerCase() === cleanLabel.toLowerCase()) || state.project.pages[index];
-    return `<a href="#/${escapeHtml(linkedPage?.slug || "index")}">${escapeHtml(cleanLabel)}</a>`;
-  }).join("")}</nav>`;
-  if (item.type === "button") return `<a class="site-button${effect}" href="${escapeHtml(item.href || "#")}" style="${style}">${escapeHtml(item.content)}</a>`;
-  if (item.type === "image") return `<div class="site-image" style="${style}"><span>${escapeHtml(item.content || "Image")}</span></div>`;
-  if (item.type === "divider") return `<hr style="${style}" />`;
-  const tag = { heading: "h2", text: "p", logo: "strong", badge: "span", card: "article" }[item.type] || "div";
-  const content = item.type === "card" ? escapeHtml(item.content).replace(/\n/g, "<br>") : escapeHtml(item.content);
-  return `<${tag} class="element-${item.type}${effect}" style="${style}">${content}</${tag}>`;
-}
-
 function buildExportHtml() {
   const project = state.project;
   const activePage = pageFrom(project);
   const fontStack = safeFontStack(project.theme.font);
   const fontUrl = googleFontUrl(fontStack);
-  const fontLinks = fontUrl
-    ? `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="${escapeHtml(fontUrl)}">`
-    : "";
-  const pages = project.pages.map((page) => `<main class="site-page" data-page="${escapeHtml(page.slug)}" aria-label="Page ${escapeHtml(page.name)}">${page.sections.map((section) => `<section class="section-${escapeHtml(section.type)}" style="${cssFromStyles(section.styles, true)}">${section.children.map(elementHtml).join("\n")}</section>`).join("\n")}</main>`).join("\n");
-  return `<!doctype html>
-<html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="${escapeHtml(state.brief || project.name)}"><title>${escapeHtml(activePage.name)} — ${escapeHtml(project.name)}</title>
-${fontLinks}
-<style>
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:${project.theme.text};background:${project.theme.background};font-family:${fontStack}}.site-page{display:none}.site-page.active{display:block}section>*{margin-top:0;margin-bottom:0}.nav-links{display:flex;gap:24px}.nav-links a{color:inherit;text-decoration:none}.site-button{display:inline-block;text-decoration:none;transition:.2s}.effect-lift:hover{transform:translateY(-4px);box-shadow:0 12px 28px #17181c2b}.effect-scale:hover{transform:scale(1.06)}.effect-glow:hover{box-shadow:0 0 0 5px ${project.theme.accent}30,0 10px 30px ${project.theme.accent}45}.site-image{min-height:260px;display:grid;place-items:center;background:linear-gradient(135deg,${project.theme.soft || project.theme.surface},${project.theme.surface})}hr{width:100%;border:0;border-top:1px solid ${project.theme.muted}}.section-features>.element-heading{grid-column:1/-1}.element-card{white-space:normal;line-height:1.6}
-@media(max-width:700px){section{padding-left:24px!important;padding-right:24px!important}.section-navbar .nav-links{display:none}section[style*="flex-direction:row"]{flex-direction:column!important}section[style*="grid-template-columns"]{grid-template-columns:1fr!important}h2{font-size:clamp(28px,10vw,42px)!important}}
-</style></head><body>${pages}<script>
-const pageNames=${JSON.stringify(Object.fromEntries(project.pages.map((page) => [page.slug, page.name])))};
-function showPage(){const slug=location.hash.replace(/^#\//,"")||${JSON.stringify(activePage.slug)};const target=document.querySelector('[data-page="'+CSS.escape(slug)+'"]')||document.querySelector('.site-page');document.querySelectorAll('.site-page').forEach(page=>page.classList.toggle('active',page===target));document.title=(pageNames[target.dataset.page]||${JSON.stringify(project.name)})+' — '+${JSON.stringify(project.name)};scrollTo(0,0)}
-addEventListener('hashchange',showPage);showPage();
-</script></body></html>`;
+  return createExportHtml({ project, activePage, brief: state.brief, fontStack, fontUrl });
 }
 
 function previewSite() {
@@ -1384,6 +1687,7 @@ function bindEvents() {
   $$("[data-viewport]").forEach((button) => button.addEventListener("click", () => { state.viewport = button.dataset.viewport; saveWorkspace(); renderAll(); }));
   $("#zoomOut").addEventListener("click", () => { state.zoom = clamp(state.zoom - .1, .3, 1.2); saveWorkspace(); renderAll(); });
   $("#zoomIn").addEventListener("click", () => { state.zoom = clamp(state.zoom + .1, .3, 1.2); saveWorkspace(); renderAll(); });
+  $("#freePageButton").addEventListener("click", enableFreePageEditing);
   $$("[data-left-tab]").forEach((button) => button.addEventListener("click", () => {
     state.leftTab = button.dataset.leftTab;
     $$("[data-left-tab]").forEach((item) => { item.classList.toggle("active", item === button); item.setAttribute("aria-selected", String(item === button)); });
@@ -1391,7 +1695,10 @@ function bindEvents() {
     $("#insertPanel").classList.toggle("hidden", button.dataset.leftTab !== "insert");
     saveWorkspace();
   }));
-  $$("[data-add-type]").forEach((button) => button.addEventListener("click", () => addElement(button.dataset.addType)));
+  $$("[data-add-type]").forEach((button) => button.addEventListener("click", () => {
+    addElement(button.dataset.addType);
+    if (button.dataset.addType === "image") $("#imageFileInput").click();
+  }));
   $("#addPageButton").addEventListener("click", () => {
     $("#pageNameInput").value = "";
     $("#pageDescriptionInput").value = "";
@@ -1409,10 +1716,33 @@ function bindEvents() {
   $("#cancelPageButton").addEventListener("click", () => $("#pageDialog").close());
   $("#addSectionButton").addEventListener("click", addSection);
   $$(".section-heading").forEach((button) => button.addEventListener("click", () => button.classList.toggle("expanded")));
+  $("#layoutModeInput").addEventListener("change", (event) => changeSelectedSectionLayout(event.target.value));
+  $("#positionXInput").addEventListener("change", (event) => updateSelected("x", clamp(number(event.target.value), 0, 100)));
+  $("#positionYInput").addEventListener("change", (event) => updateSelected("y", Math.max(0, number(event.target.value))));
+  $("#freeHeightInput").addEventListener("change", (event) => updateSelectedSectionStyle("freeHeight", clamp(number(event.target.value), 200, 3000)));
+  $("#chooseImageButton").addEventListener("click", () => $("#imageFileInput").click());
+  $("#imageFileInput").addEventListener("change", (event) => importSelectedImage(event.target.files?.[0]));
+  $("#imageSrcInput").addEventListener("change", (event) => {
+    const source = safeImageSource(event.target.value);
+    if (event.target.value && !source) {
+      showToast("URL non valide", "Utilisez une adresse HTTP ou HTTPS vers une image.", "warning");
+      event.target.value = "";
+      return;
+    }
+    updateSelected("src", source, "root");
+  });
+  $("#imageAltInput").addEventListener("change", (event) => {
+    updateSelected("alt", event.target.value.trim(), "root");
+  });
+  $("#removeImageButton").addEventListener("click", () => {
+    updateSelected("src", "", "root");
+    showToast("Image retirée", "Le bloc image reste disponible dans le canvas.");
+  });
 
   const bindings = [
     ["#contentInput", "content", "string", "root"], ["#hrefInput", "href", "string", "root"],
-    ["#widthInput", "width", "number"], ["#fontSizeInput", "fontSize", "number"], ["#radiusInput", "borderRadius", "number"], ["#gapInput", "gap", "number"],
+    ["#customHtmlInput", "html", "string", "root"], ["#customCssInput", "css", "string", "root"], ["#customJsInput", "js", "string", "root"],
+    ["#widthInput", "width", "number"], ["#heightInput", "minHeight", "number"], ["#fontSizeInput", "fontSize", "number"], ["#radiusInput", "borderRadius", "number"], ["#gapInput", "gap", "number"],
     ["#effectInput", "effect", "string", "root"]
   ];
   bindings.forEach(([selector, property, valueType, root]) => $(selector).addEventListener("change", (event) => updateSelected(property, valueType === "number" && event.target.value !== "" ? number(event.target.value) : event.target.value, root === "root" ? "root" : "styles")));

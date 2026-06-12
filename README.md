@@ -1,4 +1,4 @@
-# Atelier AI
+# Phanès
 
 Éditeur visuel de sites web assisté par IA. L’onboarding génère séparément le header, le contenu principal et le footer. Après chaque prompt, le résultat apparaît dans un aperçu en direct et l’utilisateur choisit la composition avant de continuer.
 
@@ -18,11 +18,34 @@ de choisir le port manuellement :
 PORT=5000 npm start
 ```
 
+## Arborescence
+
+```text
+.
+├── public/
+│   ├── app.js                 # orchestration de l'éditeur
+│   ├── index.html
+│   ├── styles.css
+│   └── js/
+│       ├── custom-runtime.js  # exécution isolée des blocs custom
+│       ├── export-site.js     # génération de l'export HTML
+│       └── media.js           # import et optimisation des images
+├── src/server/
+│   ├── project.mjs            # modèle, schémas et normalisation
+│   └── providers.mjs          # Mistral Vibe et Antigravity CLI
+├── test/                      # tests unitaires et HTTP
+└── server.mjs                 # API, LM Studio et serveur statique
+```
+
+Le navigateur utilise des modules ES natifs, sans étape de build. Le fichier
+`server.mjs` conserve les routes publiques tandis que la logique métier est
+placée dans `src/server`.
+
 ## LM Studio
 
 1. Charger un modèle instruct d’au moins 7B dans LM Studio.
 2. Activer le serveur local dans l’onglet **Developer** sur le port `1234`.
-3. Recharger Atelier AI. Le statut « LM Studio connecté » apparaît en bas à gauche.
+3. Recharger Phanès. Le statut « LM Studio connecté » apparaît en bas à gauche.
 
 Sans LM Studio, l’application reste utilisable avec son générateur local de secours.
 
@@ -61,11 +84,39 @@ inclus dans l’abonnement ou générer des frais selon la configuration Mistral
 - modification IA isolée : seul le JSON du composant sélectionné est transmis et remplacé ;
 - couleurs, dimensions, arrondis, espacement et effets au survol ;
 - déplacement par glisser-déposer ou boutons accessibles ;
+- placement libre des éléments dans une section, avec coordonnées X/Y et hauteur ajustable ;
 - ajout, duplication et suppression de blocs ;
+- import d’images locales ou ajout par URL, avec optimisation automatique ;
+- blocs avancés générés librement en HTML, CSS et JavaScript par l’IA ;
 - historique annuler/rétablir ;
 - vues ordinateur, tablette et mobile ;
 - modification IA de l’élément sélectionné ;
 - aperçu et export HTML multipage responsive.
+
+## Blocs personnalisés
+
+Les primitives simples restent des blocs structurés faciles à déplacer et à
+modifier : titre, texte, bouton, image, logo, navigation et séparateur. Pour les
+compositions plus riches (bento, services, témoignages, tarifs, formulaires,
+galeries, FAQ, animations), l’IA génère par défaut un élément `custom` avec son
+HTML et son CSS normaux. Le JavaScript est facultatif pour un bloc statique.
+
+Lorsqu’un script est présent, il reçoit `root`, le `ShadowRoot` isolé du
+composant, et `host`, son conteneur. Il cible le contenu avec
+`root.querySelector(...)`.
+
+Sur le canvas et dans l’aperçu, ces scripts s’exécutent dans un environnement
+sandboxé. L’export HTML conserve leur comportement interactif.
+
+## Placement libre
+
+Une section peut utiliser la disposition **Placement libre** depuis
+l’inspecteur. Ses éléments deviennent positionnables avec une poignée de
+déplacement et des coordonnées X/Y précises. Le bouton **Édition libre** du
+canvas active ce comportement sur toute la page. Chaque bloc peut ensuite être
+déplacé directement, redimensionné par sa poignée inférieure droite et chaque
+section peut être allongée par sa poignée inférieure. Dans l’export, la composition libre est conservée sur ordinateur et
+repasse automatiquement en colonne sur mobile pour éviter les débordements.
 
 ## Google Fonts
 
@@ -79,7 +130,7 @@ une police de secours si le réseau est indisponible.
 
 Pendant l’onboarding, chaque appel ne génère qu’une région autorisée et le
 serveur fusionne cette région sans remplacer les deux autres. Pour une
-modification ciblée, Atelier AI envoie uniquement le composant sélectionné,
+modification ciblée, Phanès envoie uniquement le composant sélectionné,
 verrouille son identifiant et son type, filtre les styles retournés, puis
 remplace ce composant uniquement. Les modifications plus générales passent par
 le chat et restent validées par la structure complète du projet.

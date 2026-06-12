@@ -27,14 +27,14 @@ test("editor exposes a persistent global interface theme button", async () => {
 });
 
 test("editor exposes Antigravity CLI as an AI provider", async () => {
-  const [serverSource, appSource] = await Promise.all([
-    readFile(new URL("../server.mjs", import.meta.url), "utf8"),
+  const [providerSource, appSource] = await Promise.all([
+    readFile(new URL("../src/server/providers.mjs", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8")
   ]);
-  assert.match(serverSource, /ANTIGRAVITY_COMMAND/);
-  assert.match(serverSource, /async function runAntigravity/);
-  assert.match(serverSource, /--print-timeout/);
-  assert.match(serverSource, /--sandbox/);
+  assert.match(providerSource, /ANTIGRAVITY_COMMAND/);
+  assert.match(providerSource, /async function runAntigravity/);
+  assert.match(providerSource, /--print-timeout/);
+  assert.match(providerSource, /--sandbox/);
   assert.match(appSource, /Antigravity CLI/);
   assert.match(appSource, /payload\.source === "antigravity"/);
 });
@@ -63,6 +63,65 @@ test("normalization keeps multiple pages and generates unique page records", () 
   assert.equal(project.pages[0].slug, "index");
   assert.equal(project.pages[1].slug, "a-propos");
   assert.notEqual(project.pages[0].id, project.pages[1].id);
+});
+
+test("normalization preserves custom HTML CSS and JavaScript blocks", () => {
+  const project = normalizeProject({
+    name: "Site interactif",
+    theme: {},
+    pages: [{ name: "Accueil", sections: [{ type: "content", styles: {}, children: [{
+      id: "custom-calculator",
+      type: "custom",
+      content: "Calculateur",
+      html: '<button type="button">Calculer</button><output>0</output>',
+      css: "button{padding:10px}",
+      js: "root.querySelector('button').addEventListener('click', () => root.querySelector('output').textContent = '42')",
+      styles: { width: 600 }
+    }] }] }]
+  });
+  const custom = project.pages[0].sections[0].children[0];
+  assert.equal(custom.type, "custom");
+  assert.match(custom.html, /output/);
+  assert.match(custom.css, /padding/);
+  assert.match(custom.js, /root\.querySelector/);
+});
+
+test("normalization preserves real image sources and alternative text", () => {
+  const source = "data:image/png;base64,iVBORw0KGgo=";
+  const project = normalizeProject({
+    name: "Galerie",
+    theme: {},
+    pages: [{ name: "Accueil", sections: [{ type: "content", styles: {}, children: [{
+      id: "image-photo",
+      type: "image",
+      content: "Photo du projet",
+      src: source,
+      alt: "Façade du projet au coucher du soleil",
+      styles: { minHeight: 320 }
+    }] }] }]
+  });
+  const image = project.pages[0].sections[0].children[0];
+  assert.equal(image.src, source);
+  assert.equal(image.alt, "Façade du projet au coucher du soleil");
+});
+
+test("normalization preserves free layout coordinates", () => {
+  const project = normalizeProject({
+    name: "Composition libre",
+    theme: {},
+    pages: [{ name: "Accueil", sections: [{
+      id: "section-free",
+      type: "content",
+      styles: { layout: "free", freeHeight: 820, paddingX: 30 },
+      children: [{ id: "heading-free", type: "heading", content: "Titre libre", styles: { x: 12.5, y: 84, width: 460, zIndex: 3 } }]
+    }] }]
+  });
+  const section = project.pages[0].sections[0];
+  assert.equal(section.styles.layout, "free");
+  assert.equal(section.styles.freeHeight, 820);
+  assert.equal(section.children[0].styles.x, 12.5);
+  assert.equal(section.children[0].styles.y, 84);
+  assert.equal(section.children[0].styles.zIndex, 3);
 });
 
 test("staged generation replaces only the requested site region", () => {
@@ -211,6 +270,116 @@ test("assistant accepts a new page for the exact French request 'fait la page'",
   assert.equal(result.changed, true);
   assert.equal(result.project.pages.length, 2);
   assert.equal(result.project.pages[1].slug, "mentions-legales");
+});
+
+test("assistant accepts a requested custom interactive block", () => {
+  const original = createFallbackProject("un produit");
+  const edited = structuredClone(original);
+  edited.pages[0].sections[2].children.push({
+    id: "custom-price-calculator",
+    type: "custom",
+    content: "Calculateur de prix interactif",
+    html: '<label>Quantité <input type="number" value="1"></label><output>10 €</output>',
+    css: "label{display:grid;gap:8px}",
+    js: "const input=root.querySelector('input');const output=root.querySelector('output');input.addEventListener('input',()=>output.textContent=(Number(input.value)*10)+' €')",
+    styles: { width: 640 }
+  });
+  const result = normalizeAssistantProject({ answer: "Calculateur ajouté.", project: edited }, original, "Ajoute un bloc custom avec un calculateur de prix en JavaScript");
+  const custom = result.project.pages[0].sections[2].children.at(-1);
+  assert.equal(custom.type, "custom");
+  assert.match(custom.js, /addEventListener/);
+  assert.equal(result.changed, true);
+});
+
+test("assistant treats programming a calculator as an explicit addition", () => {
+  const original = createFallbackProject("un produit");
+  const edited = structuredClone(original);
+  edited.pages[0].sections[2].children.push({
+    id: "custom-programmed-calculator",
+    type: "custom",
+    content: "Calculateur programmé",
+    html: "<button>Calculer</button>",
+    css: "button{padding:10px}",
+    js: "root.querySelector('button').addEventListener('click',()=>{})",
+    styles: {}
+  });
+  const result = normalizeAssistantProject({ answer: "Calculateur programmé.", project: edited }, original, "Programme un calculateur interactif en JavaScript");
+  assert.equal(result.project.pages[0].sections[2].children.at(-1).type, "custom");
+});
+
+test("editor exposes sandboxed custom blocks and code fields", async () => {
+  const [html, app, runtime] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/custom-runtime.js", import.meta.url), "utf8")
+  ]);
+  assert.match(html, /data-add-type="custom"/);
+  assert.match(html, /id="customJsInput"/);
+  assert.match(html, /id="previewFrame"[^>]+sandbox=/);
+  assert.match(app, /customRuntimeDocument/);
+  assert.match(runtime, /new Function\('root','host'/);
+  assert.match(runtime, /attachShadow/);
+});
+
+test("editor exposes local image import URL input and image export", async () => {
+  const [html, app, media, exporter, projectModel] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/media.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/export-site.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/server/project.mjs", import.meta.url), "utf8")
+  ]);
+  assert.match(html, /id="imageFileInput"/);
+  assert.match(html, /id="imageSrcInput"/);
+  assert.match(html, /id="imageAltInput"/);
+  assert.match(app, /optimizeImageFile/);
+  assert.match(media, /FileReader/);
+  assert.match(exporter, /<img src=/);
+  assert.match(projectModel, /local-image:/);
+});
+
+test("editor exposes free positioning with responsive export fallback", async () => {
+  const [html, app, styles, exporter] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/export-site.js", import.meta.url), "utf8")
+  ]);
+  assert.match(html, /<option value="free">Placement libre<\/option>/);
+  assert.match(html, /id="positionXInput"/);
+  assert.match(html, /id="positionYInput"/);
+  assert.match(html, /id="freePageButton"/);
+  assert.match(html, /id="heightInput"/);
+  assert.match(app, /addFreePositionEvents/);
+  assert.match(app, /addFreeResizeEvents/);
+  assert.match(app, /addFreeSectionResizeEvents/);
+  assert.match(app, /enableFreePageEditing/);
+  assert.match(app, /changeSelectedSectionLayout/);
+  assert.match(exporter, /section-free/);
+  assert.match(styles, /free-drag-handle/);
+  assert.match(styles, /layout-free/);
+});
+
+test("codebase uses dedicated server and browser modules", async () => {
+  const [serverSource, appSource, projectModel, providers, runtime, media, exporter] = await Promise.all([
+    readFile(new URL("../server.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/server/project.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/server/providers.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/custom-runtime.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/media.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/js/export-site.js", import.meta.url), "utf8")
+  ]);
+  assert.match(serverSource, /from "\.\/src\/server\/project\.mjs"/);
+  assert.match(serverSource, /from "\.\/src\/server\/providers\.mjs"/);
+  assert.match(appSource, /from "\.\/js\/custom-runtime\.js"/);
+  assert.match(appSource, /from "\.\/js\/media\.js"/);
+  assert.match(appSource, /from "\.\/js\/export-site\.js"/);
+  assert.match(projectModel, /function normalizeProject/);
+  assert.match(providers, /function agentProvider/);
+  assert.match(runtime, /function customRuntimeDocument/);
+  assert.match(media, /async function optimizeImageFile/);
+  assert.match(exporter, /function buildExportHtml/);
 });
 
 test("assistant project edits reject an unsolicited site replacement", () => {
